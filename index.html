@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>営農型太陽光発電 遮光率分析ツール</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
         #map { height: 400px; width: 100%; position: relative; }
         .map-overlay {
@@ -47,6 +48,20 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             margin-top: 10px;
         }
+        #searchBox {
+            margin: 10px;
+            padding: 10px 15px;
+            font-size: 14px;
+            width: 300px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            background-color: white;
+        }
+        #searchBox:focus {
+            border-color: #4285f4;
+            outline: none;
+        }
     </style>
 </head>
 <body class="bg-gradient-to-br from-green-50 to-blue-50 min-h-screen">
@@ -62,6 +77,11 @@
         <!-- Google Maps統合セクション -->
         <div class="bg-white rounded-xl shadow-lg p-6 mb-6">
             <h2 class="text-xl font-bold mb-4">農地選択（Google Maps）</h2>
+            <div class="mb-3">
+                <input id="searchBox" type="text" placeholder="住所や地名を検索（例：○○市△△町、□□農園）" 
+                    class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    style="display: none;">
+            </div>
             <div id="map"></div>
             <div class="area-info" id="areaInfo" style="display: none;">
                 <p>選択された農地面積: <span id="selectedArea" class="font-bold">0</span> m²</p>
@@ -93,7 +113,12 @@
                         <ol class="list-decimal list-inside text-sm text-blue-700 space-y-1">
                             <li><a href="https://console.cloud.google.com/" target="_blank" class="underline">Google Cloud Console</a>にアクセス</li>
                             <li>プロジェクトを作成</li>
-                            <li>「Maps JavaScript API」を有効化</li>
+                            <li>以下のAPIを有効化：
+                                <ul class="ml-6 mt-1 list-disc">
+                                    <li>Maps JavaScript API</li>
+                                    <li>Places API（住所検索用）</li>
+                                </ul>
+                            </li>
                             <li>認証情報からAPIキーを作成</li>
                             <li>APIキーに適切な制限を設定</li>
                         </ol>
@@ -216,6 +241,12 @@
                         計算実行
                     </button>
 
+                    <button onclick="generatePDF()" 
+                        class="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition duration-200 font-semibold"
+                        id="pdfButton" style="display: none;">
+                        📄 配置図面をPDF出力
+                    </button>
+
                     <!-- 配置結果表示 -->
                     <div class="bg-gray-50 rounded-lg p-4">
                         <h3 class="font-semibold text-gray-800 mb-2">配置計算結果</h3>
@@ -294,11 +325,26 @@
             <h2 class="text-xl font-bold mb-4">使い方</h2>
             <ol class="list-decimal list-inside space-y-2 text-gray-700">
                 <li>Google Maps APIキーを取得して設定</li>
+                <li>住所検索で目的地を探すか、現在地ボタンで移動</li>
                 <li>地図上で農地を選択（多角形または長方形）- 実際の寸法が自動計算されます</li>
                 <li>必要に応じて離隔距離を設定</li>
                 <li>パネル仕様と配置間隔を入力</li>
                 <li>「計算実行」で遮光率と推奨作物を確認</li>
+                <li>「配置図面をPDF出力」で専門的な図面を生成</li>
             </ol>
+            <div class="mt-4 bg-blue-50 p-3 rounded">
+                <p class="text-sm text-blue-800">
+                    <strong>💡 ヒント：</strong>
+                    住所検索では「東京都千代田区」のような住所や、「東京駅」のような地名・施設名で検索できます。
+                    衛星写真で農地を確認しながら選択してください。
+                </p>
+            </div>
+            <div class="mt-3 bg-green-50 p-3 rounded">
+                <p class="text-sm text-green-800">
+                    <strong>📄 PDF出力について：</strong>
+                    計算実行後、配置図面をPDF形式で出力できます。平面図、側面図、仕様、遮光率計算を含む専門的な図面が生成されます。
+                </p>
+            </div>
         </div>
     </div>
 
@@ -347,7 +393,7 @@
 
             // 新しいスクリプトタグを作成
             const script = document.createElement('script');
-            script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initMap&libraries=drawing,geometry`;
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initMap&libraries=drawing,geometry,places`;
             script.async = true;
             script.defer = true;
             script.onerror = function() {
@@ -363,9 +409,46 @@
         // Google Maps初期化
         function initMap() {
             map = new google.maps.Map(document.getElementById('map'), {
-                center: { lat: 35.6762, lng: 139.6503 }, // 東京
-                zoom: 15,
+                center: { lat: 36.2048, lng: 138.2529 }, // 日本の中心付近
+                zoom: 12,
                 mapTypeId: 'satellite'
+            });
+
+            // 住所検索ボックスの初期化
+            const searchBox = document.getElementById('searchBox');
+            searchBox.style.display = 'block';
+            const searchBoxControl = new google.maps.places.SearchBox(searchBox);
+            
+            // 検索ボックスを地図に配置
+            map.controls[google.maps.ControlPosition.TOP_LEFT].push(searchBox);
+
+            // 検索結果が選択されたときの処理
+            searchBoxControl.addListener('places_changed', function() {
+                const places = searchBoxControl.getPlaces();
+
+                if (places.length === 0) {
+                    return;
+                }
+
+                // 最初の検索結果に移動
+                const place = places[0];
+                if (!place.geometry || !place.geometry.location) {
+                    alert('場所が見つかりませんでした');
+                    return;
+                }
+
+                // 地図を移動
+                if (place.geometry.viewport) {
+                    map.fitBounds(place.geometry.viewport);
+                } else {
+                    map.setCenter(place.geometry.location);
+                    map.setZoom(17);
+                }
+            });
+
+            // 地図の表示範囲が変更されたときに検索ボックスの検索範囲を更新
+            map.addListener('bounds_changed', function() {
+                searchBoxControl.setBounds(map.getBounds());
             });
 
             // 描画ツール
@@ -420,8 +503,50 @@
             clearButton.innerHTML = '<button class="controls-button" onclick="clearSelection()">選択をクリア</button>';
             map.controls[google.maps.ControlPosition.TOP_RIGHT].push(clearButton);
 
+            // 現在地ボタン
+            const locationButton = document.createElement('div');
+            locationButton.className = 'map-controls';
+            locationButton.innerHTML = '<button class="controls-button" onclick="getCurrentLocation()">📍 現在地</button>';
+            map.controls[google.maps.ControlPosition.TOP_RIGHT].push(locationButton);
+
             // APIキー警告を非表示
             document.getElementById('apiKeyWarning').style.display = 'none';
+        }
+
+        // 現在地を取得
+        function getCurrentLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const pos = {
+                            lat: position.coords.latitude,
+                            lng: position.coords.longitude
+                        };
+                        map.setCenter(pos);
+                        map.setZoom(17);
+                        
+                        // 現在地にマーカーを表示
+                        new google.maps.Marker({
+                            position: pos,
+                            map: map,
+                            title: '現在地',
+                            icon: {
+                                path: google.maps.SymbolPath.CIRCLE,
+                                scale: 10,
+                                fillColor: '#4285F4',
+                                fillOpacity: 1,
+                                strokeColor: '#ffffff',
+                                strokeWeight: 2
+                            }
+                        });
+                    },
+                    () => {
+                        alert('現在地の取得に失敗しました。位置情報の許可を確認してください。');
+                    }
+                );
+            } else {
+                alert('お使いのブラウザは位置情報をサポートしていません。');
+            }
         }
 
         // 面積と寸法を計算
@@ -570,6 +695,209 @@
             } else {
                 shadingRatioElement.className = 'text-2xl font-bold text-red-600';
             }
+
+            // PDF出力ボタンを表示
+            if (totalPanels > 0) {
+                document.getElementById('pdfButton').style.display = 'block';
+            }
+        }
+
+        // PDF生成関数
+        function generatePDF() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({
+                orientation: 'landscape',
+                unit: 'mm',
+                format: 'a3'
+            });
+
+            // 設定値を取得
+            const fieldWidth = parseFloat(document.getElementById('fieldWidth').value) || 0;
+            const fieldLength = parseFloat(document.getElementById('fieldLength').value) || 0;
+            const panelWidth = parseFloat(document.getElementById('panelWidth').value) || 0;
+            const panelHeight = parseFloat(document.getElementById('panelHeight').value) || 0;
+            const tiltAngle = parseFloat(document.getElementById('tiltAngle').value) || 0;
+            const columnSpacing = parseFloat(document.getElementById('columnSpacing').value) || 0;
+            const rowSpacing = parseFloat(document.getElementById('rowSpacing').value) || 0;
+            const panelCapacity = parseFloat(document.getElementById('panelCapacity').value) || 400;
+            const columnCount = Math.floor((fieldWidth * 1000) / (panelWidth + columnSpacing));
+            const rowCount = Math.floor((fieldLength * 1000) / (panelHeight + rowSpacing));
+            const totalPanels = rowCount * columnCount;
+
+            // 遮光率計算
+            const singlePanelArea = (panelWidth * panelHeight) / 1000000;
+            const panelHorizontalProjection = singlePanelArea * Math.cos((tiltAngle * Math.PI) / 180);
+            const totalPanelHorizontalArea = totalPanels * panelHorizontalProjection;
+            const totalFieldArea = fieldWidth * fieldLength;
+            const shadingRatio = (totalPanelHorizontalArea / totalFieldArea) * 100;
+            const totalPower = (totalPanels * panelCapacity) / 1000;
+
+            // 図面枠を描画
+            doc.setLineWidth(0.5);
+            doc.rect(5, 5, 410, 287);
+            doc.setLineWidth(1);
+            doc.rect(10, 10, 400, 277);
+
+            // タイトル
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(18);
+            doc.text(`営農型太陽光発電配置図 ${totalPower.toFixed(1)}kW 遮光率${shadingRatio.toFixed(1)}%`, 210, 25, { align: 'center' });
+
+            // 平面図エリア
+            const planX = 20;
+            const planY = 40;
+            const planWidth = 280;
+            const planHeight = 180;
+            
+            // 平面図の枠
+            doc.setLineWidth(0.5);
+            doc.rect(planX, planY, planWidth, planHeight);
+
+            // スケール計算
+            const scaleX = (planWidth - 20) / (fieldWidth * 1000);
+            const scaleY = (planHeight - 20) / (fieldLength * 1000);
+            const scale = Math.min(scaleX, scaleY);
+
+            // 農地外形
+            const scaledFieldWidth = fieldWidth * 1000 * scale;
+            const scaledFieldLength = fieldLength * 1000 * scale;
+            const offsetX = planX + (planWidth - scaledFieldWidth) / 2;
+            const offsetY = planY + (planHeight - scaledFieldLength) / 2;
+
+            doc.setLineWidth(1);
+            doc.rect(offsetX, offsetY, scaledFieldWidth, scaledFieldLength);
+
+            // パネル配置を描画
+            doc.setLineWidth(0.3);
+            doc.setFillColor(200, 200, 255);
+            for (let row = 0; row < rowCount; row++) {
+                for (let col = 0; col < columnCount; col++) {
+                    const x = offsetX + col * (panelWidth + columnSpacing) * scale;
+                    const y = offsetY + row * (panelHeight + rowSpacing) * scale;
+                    const w = panelWidth * scale;
+                    const h = panelHeight * scale;
+                    doc.rect(x, y, w, h, 'FD');
+                }
+            }
+
+            // 寸法線（横）
+            doc.setLineWidth(0.3);
+            doc.line(offsetX, offsetY + scaledFieldLength + 10, offsetX + scaledFieldWidth, offsetY + scaledFieldLength + 10);
+            doc.line(offsetX, offsetY + scaledFieldLength + 8, offsetX, offsetY + scaledFieldLength + 12);
+            doc.line(offsetX + scaledFieldWidth, offsetY + scaledFieldLength + 8, offsetX + scaledFieldWidth, offsetY + scaledFieldLength + 12);
+            doc.setFontSize(10);
+            doc.text(`${fieldWidth * 1000}`, offsetX + scaledFieldWidth / 2, offsetY + scaledFieldLength + 15, { align: 'center' });
+
+            // 寸法線（縦）
+            doc.line(offsetX + scaledFieldWidth + 10, offsetY, offsetX + scaledFieldWidth + 10, offsetY + scaledFieldLength);
+            doc.line(offsetX + scaledFieldWidth + 8, offsetY, offsetX + scaledFieldWidth + 12, offsetY);
+            doc.line(offsetX + scaledFieldWidth + 8, offsetY + scaledFieldLength, offsetX + scaledFieldWidth + 12, offsetY + scaledFieldLength);
+            doc.save();
+            doc.text(0, 0, `${fieldLength * 1000}`, {
+                angle: 90
+            });
+            doc.restore();
+            const textWidth = doc.getTextWidth(`${fieldLength * 1000}`);
+            doc.text(`${fieldLength * 1000}`, offsetX + scaledFieldWidth + 15, offsetY + scaledFieldLength / 2 + textWidth / 2, { angle: 90 });
+
+            // 側面図
+            const sideX = 310;
+            const sideY = 100;
+            doc.setLineWidth(0.5);
+            doc.rect(sideX, sideY, 90, 60);
+            
+            // 側面図の内容
+            doc.setLineWidth(0.3);
+            // 地面
+            doc.line(sideX + 10, sideY + 50, sideX + 80, sideY + 50);
+            // 支柱
+            doc.line(sideX + 25, sideY + 50, sideX + 25, sideY + 30);
+            doc.line(sideX + 65, sideY + 50, sideX + 65, sideY + 30);
+            // パネル（傾斜）
+            const panelTop = sideY + 30 - Math.sin((tiltAngle * Math.PI) / 180) * 15;
+            doc.line(sideX + 20, sideY + 30, sideX + 70, panelTop);
+            doc.setLineWidth(2);
+            doc.line(sideX + 20, sideY + 30, sideX + 70, panelTop);
+            
+            // 傾斜角度表示
+            doc.setFontSize(9);
+            doc.text(`傾斜${tiltAngle}°`, sideX + 45, sideY + 20, { align: 'center' });
+
+            // モジュール仕様ボックス
+            const specX = 310;
+            const specY = 40;
+            doc.setLineWidth(0.5);
+            doc.rect(specX, specY, 90, 50);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(10);
+            doc.text('◇モジュール仕様', specX + 5, specY + 8);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.text(`型式：${panelCapacity}W太陽電池`, specX + 5, specY + 16);
+            doc.text(`寸法：${panelWidth}×${panelHeight}×35mm`, specX + 5, specY + 23);
+            doc.text(`枚数：${totalPanels}枚`, specX + 5, specY + 30);
+            doc.text(`容量：${totalPower.toFixed(2)}kW`, specX + 5, specY + 37);
+            doc.text(`重量：約20kg/枚`, specX + 5, specY + 44);
+
+            // 遮光率計算ボックス
+            const calcX = 20;
+            const calcY = 230;
+            doc.setLineWidth(0.5);
+            doc.rect(calcX, calcY, 280, 45);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(10);
+            doc.text('◇遮光率', calcX + 5, calcY + 8);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.text(`モジュール総面積：${totalPanels}枚 × ${singlePanelArea.toFixed(2)}m² = ${(totalPanels * singlePanelArea).toFixed(1)}m²`, calcX + 5, calcY + 16);
+            doc.text(`水平投影面積：${(totalPanels * panelHorizontalProjection).toFixed(1)}m²（傾斜${tiltAngle}度考慮）`, calcX + 5, calcY + 24);
+            doc.text(`占有総面積：${totalFieldArea.toFixed(1)}m²`, calcX + 5, calcY + 32);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(255, 0, 0);
+            doc.text(`遮光率=${(totalPanels * panelHorizontalProjection).toFixed(1)}m² ÷ ${totalFieldArea.toFixed(1)}m² × 100 = ${shadingRatio.toFixed(2)}%`, calcX + 5, calcY + 40);
+            doc.setTextColor(0, 0, 0);
+
+            // 表題欄
+            doc.setLineWidth(0.5);
+            doc.rect(310, 230, 90, 45);
+            doc.line(310, 240, 400, 240);
+            doc.line(310, 250, 400, 250);
+            doc.line(310, 260, 400, 260);
+            doc.line(340, 230, 340, 275);
+            doc.line(370, 230, 370, 275);
+            
+            doc.setFontSize(8);
+            doc.text('番号', 325, 237, { align: 'center' });
+            doc.text('縮尺', 355, 237, { align: 'center' });
+            doc.text('設計年月日', 385, 237, { align: 'center' });
+            doc.text('設計', 325, 247, { align: 'center' });
+            doc.text('図面名称', 325, 257, { align: 'center' });
+            doc.text('会社名', 325, 267, { align: 'center' });
+            
+            // 日付
+            const today = new Date();
+            const dateStr = `${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
+            doc.setFontSize(9);
+            doc.text(dateStr, 385, 247, { align: 'center' });
+            doc.text('営農型太陽光発電', 355, 257, { align: 'center' });
+            doc.text('配置図', 355, 267, { align: 'center' });
+
+            // 方位記号
+            const compassX = 380;
+            const compassY = 190;
+            doc.setLineWidth(0.5);
+            doc.circle(compassX, compassY, 15);
+            doc.setLineWidth(1);
+            // 北向き矢印
+            doc.line(compassX, compassY - 10, compassX, compassY + 10);
+            doc.line(compassX, compassY - 10, compassX - 3, compassY - 5);
+            doc.line(compassX, compassY - 10, compassX + 3, compassY - 5);
+            doc.setFontSize(10);
+            doc.text('N', compassX, compassY - 18, { align: 'center' });
+
+            // PDFを保存
+            const filename = `営農型太陽光発電_配置図_${totalPower.toFixed(1)}kW_遮光率${shadingRatio.toFixed(1)}%.pdf`;
+            doc.save(filename);
         }
 
         // ページ読み込み時の処理
