@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>営農型太陽光発電 遮光率分析ツール</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        #map {
+            height: 400px;
+            width: 100%;
+            position: relative;
+        }
+        .map-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .api-key-form {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            max-width: 500px;
+            width: 90%;
+        }
+        .map-controls {
+            background-color: white;
+            border: 2px solid #ddd;
+            border-radius: 3px;
+            box-shadow: 0 2px 6px rgba(0,0,0,.3);
+            margin: 10px;
+            padding: 10px;
+            text-align: center;
+        }
+        .controls-button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 2px;
+        }
+        .controls-button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-green-50 to-blue-50 min-h-screen">
+    <div class="max-w-7xl mx-auto p-6">
+        <!-- ヘッダー -->
+        <div class="mb-8 text-center">
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">
+                営農型太陽光発電 遮光率分析ツール
+            </h1>
+            <p class="text-gray-600">Google Mapsで農地を選択し、太陽光パネル配置と遮光率を分析します</p>
+            <p class="text-sm text-blue-600 mt-2">
+                <a href="https://github.com/yourusername/agrivoltaics-analyzer" target="_blank" class="underline">
+                    GitHubで公開中 - スター⭐をお願いします！
+                </a>
+            </p>
+        </div>
+
+        <!-- Google Maps統合セクション -->
+        <div class="bg-white rounded-xl shadow-lg p-6 mb-6">
+            <h2 class="text-xl font-bold mb-4">農地選択（Google Maps）</h2>
+            <div id="map">
+                <div class="map-overlay" id="apiKeyOverlay">
+                    <div class="api-key-form">
+                        <h3 class="text-xl font-bold mb-4">Google Maps APIキーの設定</h3>
+                        <p class="text-gray-600 mb-4">
+                            このツールを使用するには、Google Maps APIキーが必要です。
+                        </p>
+                        <div class="bg-blue-50 p-4 rounded mb-4">
+                            <h4 class="font-bold text-blue-800 mb-2">APIキーの取得方法：</h4>
+                            <ol class="list-decimal list-inside text-sm text-blue-700 space-y-1">
+                                <li><a href="https://console.cloud.google.com/" target="_blank" class="underline">Google Cloud Console</a>にアクセス</li>
+                                <li>プロジェクトを作成</li>
+                                <li>「Maps JavaScript API」を有効化</li>
+                                <li>認証情報からAPIキーを作成</li>
+                                <li>APIキーに適切な制限を設定</li>
+                            </ol>
+                        </div>
+                        <input 
+                            type="text" 
+                            id="apiKeyInput" 
+                            placeholder="APIキーを入力してください" 
+                            class="w-full p-3 border border-gray-300 rounded-lg mb-4"
+                        >
+                        <div class="flex gap-2">
+                            <button 
+                                onclick="loadMapWithKey()" 
+                                class="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700"
+                            >
+                                地図を読み込む
+                            </button>
+                            <button 
+                                onclick="saveApiKey()" 
+                                class="bg-gray-600 text-white py-2 px-4 rounded-lg hover:bg-gray-700"
+                            >
+                                保存
+                            </button>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-4">
+                            ※APIキーはローカルストレージに保存されます（このブラウザのみ）
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-4 bg-yellow-50 p-3 rounded-lg" id="apiKeyWarning" style="display: none;">
+                <p class="text-sm text-yellow-800">
+                    <strong>重要：</strong>APIキーが設定されていません。
+                    <button onclick="showApiKeyForm()" class="underline text-yellow-900">設定する</button>
+                </p>
+            </div>
+            <div class="area-info mt-4" id="areaInfo" style="display: none;">
+                <p>選択された農地面積: <span id="selectedArea" class="font-bold">0</span> m²</p>
+                <p>推定サイズ: 幅 <span id="estimatedWidth" class="font-bold">0</span> m × 長さ <span id="estimatedLength" class="font-bold">0</span> m</p>
+            </div>
+        </div>
+
+        <!-- 入力フォーム -->
+        <div class="grid lg:grid-cols-3 gap-6">
+            <!-- 農地・パネル設定 -->
+            <div class="bg-white rounded-xl shadow-lg p-6">
+                <h2 class="text-xl font-bold mb-4">農地・パネル設定</h2>
+                
+                <div class="space-y-4">
+                    <div class="bg-purple-50 p-3 rounded-lg">
+                        <h3 class="font-semibold text-purple-800 mb-2">農地寸法</h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    農地幅（東西方向）(m)
+                                </label>
+                                <input type="number" id="fieldWidth" value="50" step="1" 
+                                    class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    農地長さ（南北方向）(m)
+                                </label>
+                                <input type="number" id="fieldLength" value="100" step="1"
+                                    class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-blue-50 p-3 rounded-lg">
+                        <h3 class="font-semibold text-blue-800 mb-2">パネル仕様</h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    パネル幅 (mm)
+                                </label>
+                                <input type="number" id="panelWidth" value="2000" step="10"
+                                    class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    パネル高さ (mm)
+                                </label>
+                                <input type="number" id="panelHeight" value="1000" step="10"
+                                    class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    傾斜角度 (度)
+                                </label>
+                                <input type="number" id="tiltAngle" value="30" min="0" max="90"
+                                    class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 配置設定 -->
+            <div class="bg-white rounded-xl shadow-lg p-6">
+                <h2 class="text-xl font-bold mb-4">配置設定</h2>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            列間隔（南北方向）(mm)
+                        </label>
+                        <input type="number" id="rowSpacing" value="6000" step="50"
+                            class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            段間隔（東西方向）(mm)
+                        </label>
+                        <input type="number" id="columnSpacing" value="4000" step="50"
+                            class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
+                    </div>
+
+                    <button onclick="calculate()" 
+                        class="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-200 font-semibold">
+                        計算実行
+                    </button>
+
+                    <!-- 配置結果表示 -->
+                    <div class="bg-gray-50 rounded-lg p-4">
+                        <h3 class="font-semibold text-gray-800 mb-2">配置計算結果</h3>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">列数（南北）:</span>
+                                <span class="font-bold" id="rowCount">0 列</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">段数（東西）:</span>
+                                <span class="font-bold" id="columnCount">0 段</span>
+                            </div>
+                            <div class="flex justify-between border-t pt-2">
+                                <span class="text-gray-600">総パネル数:</span>
+                                <span class="font-bold text-lg text-indigo-600" id="totalPanels">0 枚</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 分析結果 -->
+            <div class="bg-white rounded-xl shadow-lg p-6">
+                <h2 class="text-xl font-bold mb-4">分析結果</h2>
+
+                <div class="space-y-4">
+                    <!-- 面積情報 -->
+                    <div class="bg-blue-50 rounded-lg p-4">
+                        <h3 class="font-semibold text-blue-800 mb-2">面積情報</h3>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">農地全体面積:</span>
+                                <span class="font-bold" id="totalFieldArea">0 m²</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">パネル総面積:</span>
+                                <span class="font-bold" id="totalPanelArea">0 m²</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 全体遮光率 -->
+                    <div class="bg-gray-50 rounded-lg p-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-sm font-medium text-gray-700">全体遮光率</span>
+                            <span class="text-2xl font-bold" id="shadingRatio">0%</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-3">
+                            <div id="shadingBar" class="bg-gradient-to-r from-yellow-400 to-red-500 h-3 rounded-full transition-all duration-500" style="width: 0%"></div>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-1">パネル水平投影面積 ÷ 農地全体面積</p>
+                    </div>
+
+                    <!-- 推定発電量 -->
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                        <h3 class="font-semibold text-yellow-800 mb-1">推定発電量</h3>
+                        <p class="text-2xl font-bold text-yellow-700" id="estimatedPower">0 kW</p>
+                        <p class="text-xs text-yellow-600 mt-1">※パネル1枚400W想定</p>
+                    </div>
+
+                    <!-- 作物適性 -->
+                    <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                        <h3 class="font-semibold text-green-800 mb-2">推奨作物</h3>
+                        <p class="text-green-700" id="cropSuitability">-</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 使い方 -->
+        <div class="mt-8 bg-white rounded-xl shadow-lg p-6">
+            <h2 class="text-xl font-bold mb-4">使い方</h2>
+            <ol class="list-decimal list-inside space-y-2 text-gray-700">
+                <li>Google Maps APIキーを取得して設定</li>
+                <li>地図上で農地を選択（多角形または長方形）</li>
+                <li>パネル仕様と配置間隔を入力</li>
+                <li>「計算実行」で遮光率と推奨作物を確認</li>
+            </ol>
+            <div class="mt-4 p-4 bg-gray-50 rounded-lg">
+                <p class="text-sm text-gray-600">
+                    <strong>オープンソース：</strong>このツールは無料で使用できます。
+                    改善提案やバグ報告は
+                    <a href="https://github.com/yourusername/agrivoltaics-analyzer/issues" target="_blank" class="text-blue-600 underline">
+                        GitHub Issues
+                    </a>
+                    までお願いします。
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let map;
+        let drawingManager;
+        let selectedPolygon;
+        let apiKeyLoaded = false;
+
+        // ローカルストレージからAPIキーを取得
+        function getStoredApiKey() {
+            return localStorage.getItem('googleMapsApiKey');
+        }
+
+        // APIキーを保存
+        function saveApiKey() {
+            const apiKey = document.getElementById('apiKeyInput').value.trim();
+            if (apiKey) {
+                localStorage.setItem('googleMapsApiKey', apiKey);
+                alert('APIキーを保存しました');
+            }
+        }
+
+        // APIキーフォームを表示
+        function showApiKeyForm() {
+            document.getElementById('apiKeyOverlay').style.display = 'flex';
+            const storedKey = getStoredApiKey();
+            if (storedKey) {
+                document.getElementById('apiKeyInput').value = storedKey;
+            }
+        }
+
+        // APIキーで地図を読み込む
+        function loadMapWithKey() {
+            const apiKey = document.getElementById('apiKeyInput').value.trim() || getStoredApiKey();
+            if (!apiKey) {
+                alert('APIキーを入力してください');
+                return;
+            }
+
+            // 既存のスクリプトタグを削除
+            const existingScript = document.querySelector('script[src*="maps.googleapis.com"]');
+            if (existingScript) {
+                existingScript.remove();
+            }
+
+            // 新しいスクリプトタグを作成
+            const script = document.createElement('script');
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initMap&libraries=drawing,geometry`;
+            script.async = true;
+            script.defer = true;
+            script.onerror = function() {
+                alert('APIキーが無効か、Google Maps APIの読み込みに失敗しました。APIキーを確認してください。');
+                showApiKeyForm();
+            };
+            document.head.appendChild(script);
+
+            // オーバーレイを非表示
+            document.getElementById('apiKeyOverlay').style.display = 'none';
+            apiKeyLoaded = true;
+        }
+
+        // Google Maps初期化
+        function initMap() {
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 35.6762, lng: 139.6503 }, // 東京
+                zoom: 15,
+                mapTypeId: 'satellite'
+            });
+
+            // 描画ツール
+            drawingManager = new google.maps.drawing.DrawingManager({
+                drawingMode: null,
+                drawingControl: true,
+                drawingControlOptions: {
+                    position: google.maps.ControlPosition.TOP_CENTER,
+                    drawingModes: ['polygon', 'rectangle']
+                },
+                polygonOptions: {
+                    fillColor: '#00ff00',
+                    fillOpacity: 0.3,
+                    strokeWeight: 2,
+                    strokeColor: '#00ff00',
+                    editable: true,
+                    draggable: true
+                },
+                rectangleOptions: {
+                    fillColor: '#00ff00',
+                    fillOpacity: 0.3,
+                    strokeWeight: 2,
+                    strokeColor: '#00ff00',
+                    editable: true,
+                    draggable: true
+                }
+            });
+            drawingManager.setMap(map);
+
+            // 図形完成時のイベント
+            google.maps.event.addListener(drawingManager, 'overlaycomplete', function(event) {
+                if (selectedPolygon) {
+                    selectedPolygon.setMap(null);
+                }
+                selectedPolygon = event.overlay;
+                drawingManager.setDrawingMode(null);
+
+                // 面積計算
+                let area;
+                if (event.type === 'polygon') {
+                    area = google.maps.geometry.spherical.computeArea(selectedPolygon.getPath());
+                } else if (event.type === 'rectangle') {
+                    const bounds = selectedPolygon.getBounds();
+                    const ne = bounds.getNorthEast();
+                    const sw = bounds.getSouthWest();
+                    const width = google.maps.geometry.spherical.computeDistanceBetween(
+                        new google.maps.LatLng(sw.lat(), sw.lng()),
+                        new google.maps.LatLng(sw.lat(), ne.lng())
+                    );
+                    const height = google.maps.geometry.spherical.computeDistanceBetween(
+                        new google.maps.LatLng(sw.lat(), sw.lng()),
+                        new google.maps.LatLng(ne.lat(), sw.lng())
+                    );
+                    area = width * height;
+                    
+                    // 推定サイズを設定
+                    document.getElementById('fieldWidth').value = Math.round(width);
+                    document.getElementById('fieldLength').value = Math.round(height);
+                }
+
+                // 面積表示
+                document.getElementById('areaInfo').style.display = 'block';
+                document.getElementById('selectedArea').textContent = Math.round(area).toLocaleString();
+                document.getElementById('estimatedWidth').textContent = Math.round(Math.sqrt(area));
+                document.getElementById('estimatedLength').textContent = Math.round(Math.sqrt(area));
+
+                // 自動計算
+                calculate();
+            });
+
+            // カスタムコントロール
+            const clearButton = document.createElement('div');
+            clearButton.className = 'map-controls';
+            clearButton.innerHTML = '<button class="controls-button" onclick="clearSelection()">選択をクリア</button>';
+            map.controls[google.maps.ControlPosition.TOP_RIGHT].push(clearButton);
+
+            // APIキー警告を非表示
+            document.getElementById('apiKeyWarning').style.display = 'none';
+        }
+
+        // 選択クリア
+        function clearSelection() {
+            if (selectedPolygon) {
+                selectedPolygon.setMap(null);
+                selectedPolygon = null;
+                document.getElementById('areaInfo').style.display = 'none';
+            }
+        }
+
+        // 計算実行
+        function calculate() {
+            // 入力値取得
+            const fieldWidth = parseFloat(document.getElementById('fieldWidth').value) || 0;
+            const fieldLength = parseFloat(document.getElementById('fieldLength').value) || 0;
+            const panelWidth = parseFloat(document.getElementById('panelWidth').value) || 0;
+            const panelHeight = parseFloat(document.getElementById('panelHeight').value) || 0;
+            const tiltAngle = parseFloat(document.getElementById('tiltAngle').value) || 0;
+            const rowSpacing = parseFloat(document.getElementById('rowSpacing').value) || 0;
+            const columnSpacing = parseFloat(document.getElementById('columnSpacing').value) || 0;
+
+            // 面積計算
+            const totalFieldArea = fieldWidth * fieldLength;
+            const singlePanelArea = (panelWidth * panelHeight) / 1000000; // mm² to m²
+            const panelHorizontalProjection = singlePanelArea * Math.cos((tiltAngle * Math.PI) / 180);
+
+            // 配置計算
+            const rowCount = Math.floor((fieldLength * 1000) / rowSpacing);
+            const columnCount = Math.floor((fieldWidth * 1000) / columnSpacing);
+            const totalPanels = rowCount * columnCount;
+
+            // パネル総面積
+            const totalPanelArea = totalPanels * singlePanelArea;
+            const totalPanelHorizontalArea = totalPanels * panelHorizontalProjection;
+
+            // 遮光率
+            const shadingRatio = totalFieldArea > 0 ? (totalPanelHorizontalArea / totalFieldArea) * 100 : 0;
+
+            // 推定発電量
+            const estimatedPower = totalPanels * 0.4; // 400W per panel
+
+            // 作物適性
+            let cropSuitability;
+            if (shadingRatio < 20) {
+                cropSuitability = '日照要求型作物（トマト、キュウリ、ナス、ピーマン等）';
+            } else if (shadingRatio < 35) {
+                cropSuitability = '半日陰適応型作物（レタス、ホウレンソウ、小松菜等）';
+            } else if (shadingRatio < 50) {
+                cropSuitability = '日陰適応型作物（ミョウガ、シイタケ、山菜等）';
+            } else {
+                cropSuitability = '畜産・牧草利用（牛、羊の放牧、飼料作物等）';
+            }
+
+            // 結果表示
+            document.getElementById('rowCount').textContent = rowCount + ' 列';
+            document.getElementById('columnCount').textContent = columnCount + ' 段';
+            document.getElementById('totalPanels').textContent = totalPanels + ' 枚';
+            document.getElementById('totalFieldArea').textContent = Math.round(totalFieldArea).toLocaleString() + ' m²';
+            document.getElementById('totalPanelArea').textContent = Math.round(totalPanelArea).toLocaleString() + ' m²';
+            document.getElementById('shadingRatio').textContent = Math.round(shadingRatio * 10) / 10 + '%';
+            document.getElementById('shadingBar').style.width = Math.min(shadingRatio, 100) + '%';
+            document.getElementById('estimatedPower').textContent = Math.round(estimatedPower * 10) / 10 + ' kW';
+            document.getElementById('cropSuitability').textContent = cropSuitability;
+
+            // 遮光率に応じた色変更
+            const shadingRatioElement = document.getElementById('shadingRatio');
+            if (shadingRatio < 20) {
+                shadingRatioElement.className = 'text-2xl font-bold text-green-600';
+            } else if (shadingRatio < 35) {
+                shadingRatioElement.className = 'text-2xl font-bold text-yellow-600';
+            } else if (shadingRatio < 50) {
+                shadingRatioElement.className = 'text-2xl font-bold text-orange-600';
+            } else {
+                shadingRatioElement.className = 'text-2xl font-bold text-red-600';
+            }
+        }
+
+        // ページ読み込み時の処理
+        document.addEventListener('DOMContentLoaded', function() {
+            // 入力変更時の自動計算
+            const inputs = document.querySelectorAll('input[type="number"]');
+            inputs.forEach(input => {
+                input.addEventListener('input', calculate);
+            });
+            calculate();
+
+            // 保存されたAPIキーがあるか確認
+            const storedApiKey = getStoredApiKey();
+            if (storedApiKey) {
+                // 自動的に地図を読み込む
+                document.getElementById('apiKeyInput').value = storedApiKey;
+                loadMapWithKey();
+            } else {
+                // APIキー入力フォームを表示
+                document.getElementById('apiKeyWarning').style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
