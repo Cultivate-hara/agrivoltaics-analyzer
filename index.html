@@ -6,6 +6,7 @@
     <title>営農型太陽光発電 遮光率分析ツール</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         #map { height: 400px; width: 100%; position: relative; }
         .map-overlay {
@@ -41,6 +42,9 @@
         .controls-button.active {
             background-color: #2196F3;
         }
+        .controls-button.measuring {
+            background-color: #FF9800;
+        }
         .area-info {
             background-color: white;
             padding: 10px;
@@ -61,6 +65,25 @@
         #searchBox:focus {
             border-color: #4285f4;
             outline: none;
+        }
+        #layoutPreview {
+            width: 100%;
+            height: 300px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #f9f9f9;
+            position: relative;
+            overflow: hidden;
+        }
+        .panel-preview {
+            position: absolute;
+            background: #4169E1;
+            border: 1px solid #1E40AF;
+            opacity: 0.8;
+        }
+        @font-face {
+            font-family: 'NotoSansJP';
+            src: url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap');
         }
     </style>
 </head>
@@ -85,7 +108,8 @@
             <div id="map"></div>
             <div class="area-info" id="areaInfo" style="display: none;">
                 <p>選択された農地面積: <span id="selectedArea" class="font-bold">0</span> m²</p>
-                <p>実測サイズ: 幅（東西） <span id="actualWidth" class="font-bold">0</span> m × 長さ（南北） <span id="actualLength" class="font-bold">0</span> m</p>
+                <p>測定サイズ: 幅（東西） <span id="measuredWidth" class="font-bold">0</span> m × 長さ（南北） <span id="measuredLength" class="font-bold">0</span> m</p>
+                <p class="text-sm text-gray-600 mt-1">※測定ツールで正確な寸法を測定してください</p>
                 <div class="mt-2 p-2 bg-yellow-50 rounded">
                     <label class="block text-sm font-medium text-gray-700 mb-1">
                         農地からの離隔距離 (m)
@@ -117,6 +141,7 @@
                                 <ul class="ml-6 mt-1 list-disc">
                                     <li>Maps JavaScript API</li>
                                     <li>Places API（住所検索用）</li>
+                                    <li>Geocoding API（逆ジオコーディング用）</li>
                                 </ul>
                             </li>
                             <li>認証情報からAPIキーを作成</li>
@@ -205,7 +230,7 @@
                                 <label class="block text-sm font-medium text-gray-700 mb-1">
                                     パネル1枚の容量 (W)
                                 </label>
-                                <input type="number" id="panelCapacity" value="400" step="10"
+                                <input type="number" id="panelCapacity" value="600" step="10"
                                     class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
                             </div>
                         </div>
@@ -308,7 +333,7 @@
                     <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                         <h3 class="font-semibold text-yellow-800 mb-1">推定発電量</h3>
                         <p class="text-2xl font-bold text-yellow-700" id="estimatedPower">0 kW</p>
-                        <p class="text-xs text-yellow-600 mt-1" id="panelCapacityInfo">※パネル1枚400W想定</p>
+                        <p class="text-xs text-yellow-600 mt-1" id="panelCapacityInfo">※パネル1枚600W想定</p>
                     </div>
 
                     <!-- 作物適性 -->
@@ -320,29 +345,29 @@
             </div>
         </div>
 
+        <!-- 配置イメージ図 -->
+        <div class="mt-6 bg-white rounded-xl shadow-lg p-6" id="layoutPreviewSection" style="display: none;">
+            <h2 class="text-xl font-bold mb-4">配置イメージ図</h2>
+            <div id="layoutPreview"></div>
+            <p class="text-sm text-gray-600 mt-2">※青色の矩形が太陽光パネルの配置位置を示します</p>
+        </div>
+
         <!-- 使い方 -->
         <div class="mt-8 bg-white rounded-xl shadow-lg p-6">
             <h2 class="text-xl font-bold mb-4">使い方</h2>
             <ol class="list-decimal list-inside space-y-2 text-gray-700">
                 <li>Google Maps APIキーを取得して設定</li>
                 <li>住所検索で目的地を探すか、現在地ボタンで移動</li>
-                <li>地図上で農地を選択（多角形または長方形）- 実際の寸法が自動計算されます</li>
+                <li>「測定開始」ボタンで農地の幅と長さを正確に測定</li>
                 <li>必要に応じて離隔距離を設定</li>
                 <li>パネル仕様と配置間隔を入力</li>
-                <li>「計算実行」で遮光率と推奨作物を確認</li>
+                <li>「計算実行」で遮光率と配置イメージを確認</li>
                 <li>「配置図面をPDF出力」で専門的な図面を生成</li>
             </ol>
             <div class="mt-4 bg-blue-50 p-3 rounded">
                 <p class="text-sm text-blue-800">
-                    <strong>💡 ヒント：</strong>
-                    住所検索では「東京都千代田区」のような住所や、「東京駅」のような地名・施設名で検索できます。
-                    衛星写真で農地を確認しながら選択してください。
-                </p>
-            </div>
-            <div class="mt-3 bg-green-50 p-3 rounded">
-                <p class="text-sm text-green-800">
-                    <strong>📄 PDF出力について：</strong>
-                    計算実行後、配置図面をPDF形式で出力できます。平面図、側面図、仕様、遮光率計算を含む専門的な図面が生成されます。
+                    <strong>💡 測定のヒント：</strong>
+                    「測定開始」ボタンをクリック後、農地の幅（東西）と長さ（南北）をそれぞれクリックして測定してください。
                 </p>
             </div>
         </div>
@@ -352,7 +377,13 @@
         let map;
         let drawingManager;
         let selectedPolygon;
-        let actualDimensions = { width: 0, length: 0 };
+        let measurementMode = null;
+        let measurementLine = null;
+        let measurementMarkers = [];
+        let measuredDimensions = { width: 0, length: 0 };
+        let geocoder;
+        let currentCity = '';
+        let mapSnapshot = null;
 
         // ローカルストレージからAPIキーを取得
         function getStoredApiKey() {
@@ -414,6 +445,9 @@
                 mapTypeId: 'satellite'
             });
 
+            // Geocoder初期化
+            geocoder = new google.maps.Geocoder();
+
             // 住所検索ボックスの初期化
             const searchBox = document.getElementById('searchBox');
             searchBox.style.display = 'block';
@@ -444,6 +478,9 @@
                     map.setCenter(place.geometry.location);
                     map.setZoom(17);
                 }
+
+                // 市町村名を取得
+                updateCityName(place.geometry.location);
             });
 
             // 地図の表示範囲が変更されたときに検索ボックスの検索範囲を更新
@@ -495,6 +532,10 @@
                 } else if (event.type === 'rectangle') {
                     google.maps.event.addListener(selectedPolygon, 'bounds_changed', calculateAreaAndDimensions);
                 }
+
+                // 選択した場所の市町村名を取得
+                const center = map.getCenter();
+                updateCityName(center);
             });
 
             // カスタムコントロール
@@ -502,6 +543,12 @@
             clearButton.className = 'map-controls';
             clearButton.innerHTML = '<button class="controls-button" onclick="clearSelection()">選択をクリア</button>';
             map.controls[google.maps.ControlPosition.TOP_RIGHT].push(clearButton);
+
+            // 測定ボタン
+            const measureButton = document.createElement('div');
+            measureButton.className = 'map-controls';
+            measureButton.innerHTML = '<button class="controls-button" id="measureBtn" onclick="toggleMeasurement()">📏 測定開始</button>';
+            map.controls[google.maps.ControlPosition.TOP_RIGHT].push(measureButton);
 
             // 現在地ボタン
             const locationButton = document.createElement('div');
@@ -511,6 +558,112 @@
 
             // APIキー警告を非表示
             document.getElementById('apiKeyWarning').style.display = 'none';
+        }
+
+        // 市町村名を更新
+        function updateCityName(location) {
+            geocoder.geocode({ location: location }, (results, status) => {
+                if (status === 'OK' && results[0]) {
+                    for (let component of results[0].address_components) {
+                        if (component.types.includes('locality')) {
+                            currentCity = component.long_name;
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        // 測定モードの切り替え
+        function toggleMeasurement() {
+            const btn = document.getElementById('measureBtn');
+            if (measurementMode === null) {
+                measurementMode = 'width';
+                btn.textContent = '📏 幅を測定中...';
+                btn.classList.add('measuring');
+                alert('農地の幅（東西方向）を測定してください。2点をクリックして距離を測定します。');
+                
+                // マップクリックイベントを追加
+                map.addListener('click', handleMeasurementClick);
+            } else {
+                endMeasurement();
+            }
+        }
+
+        // 測定クリック処理
+        function handleMeasurementClick(event) {
+            if (measurementMarkers.length < 2) {
+                const marker = new google.maps.Marker({
+                    position: event.latLng,
+                    map: map,
+                    title: measurementMarkers.length === 0 ? '開始点' : '終了点'
+                });
+                measurementMarkers.push(marker);
+
+                if (measurementMarkers.length === 2) {
+                    // 距離を計算
+                    const distance = google.maps.geometry.spherical.computeDistanceBetween(
+                        measurementMarkers[0].getPosition(),
+                        measurementMarkers[1].getPosition()
+                    );
+
+                    // ラインを描画
+                    if (measurementLine) measurementLine.setMap(null);
+                    measurementLine = new google.maps.Polyline({
+                        path: [measurementMarkers[0].getPosition(), measurementMarkers[1].getPosition()],
+                        geodesic: true,
+                        strokeColor: '#FF0000',
+                        strokeOpacity: 1.0,
+                        strokeWeight: 3
+                    });
+                    measurementLine.setMap(map);
+
+                    // 測定結果を保存
+                    if (measurementMode === 'width') {
+                        measuredDimensions.width = distance;
+                        alert(`幅: ${distance.toFixed(1)}m\n次に長さ（南北方向）を測定してください。`);
+                        
+                        // 長さ測定モードへ
+                        clearMeasurementMarkers();
+                        measurementMode = 'length';
+                        document.getElementById('measureBtn').textContent = '📏 長さを測定中...';
+                    } else if (measurementMode === 'length') {
+                        measuredDimensions.length = distance;
+                        alert(`長さ: ${distance.toFixed(1)}m\n測定が完了しました。`);
+                        
+                        // 測定結果を表示
+                        document.getElementById('measuredWidth').textContent = measuredDimensions.width.toFixed(1);
+                        document.getElementById('measuredLength').textContent = measuredDimensions.length.toFixed(1);
+                        document.getElementById('areaInfo').style.display = 'block';
+                        
+                        // 農地寸法を更新
+                        updateFieldDimensions();
+                        
+                        // 測定終了
+                        endMeasurement();
+                    }
+                }
+            }
+        }
+
+        // 測定マーカーをクリア
+        function clearMeasurementMarkers() {
+            measurementMarkers.forEach(marker => marker.setMap(null));
+            measurementMarkers = [];
+            if (measurementLine) {
+                measurementLine.setMap(null);
+                measurementLine = null;
+            }
+        }
+
+        // 測定終了
+        function endMeasurement() {
+            measurementMode = null;
+            clearMeasurementMarkers();
+            google.maps.event.clearListeners(map, 'click');
+            const btn = document.getElementById('measureBtn');
+            btn.textContent = '📏 測定開始';
+            btn.classList.remove('measuring');
         }
 
         // 現在地を取得
@@ -539,6 +692,9 @@
                                 strokeWeight: 2
                             }
                         });
+
+                        // 市町村名を更新
+                        updateCityName(pos);
                     },
                     () => {
                         alert('現在地の取得に失敗しました。位置情報の許可を確認してください。');
@@ -551,65 +707,51 @@
 
         // 面積と寸法を計算
         function calculateAreaAndDimensions() {
-            let area, bounds;
+            let area;
             
             if (selectedPolygon.getBounds) {
                 // 長方形の場合
-                bounds = selectedPolygon.getBounds();
-            } else {
-                // 多角形の場合 - バウンディングボックスを計算
-                const path = selectedPolygon.getPath();
-                bounds = new google.maps.LatLngBounds();
-                path.forEach(function(latLng) {
-                    bounds.extend(latLng);
-                });
-                area = google.maps.geometry.spherical.computeArea(path);
-            }
-
-            const ne = bounds.getNorthEast();
-            const sw = bounds.getSouthWest();
-            const se = new google.maps.LatLng(sw.lat(), ne.lng());
-            const nw = new google.maps.LatLng(ne.lat(), sw.lng());
-
-            // 実際の寸法を計算（メートル単位）
-            const width = google.maps.geometry.spherical.computeDistanceBetween(sw, se);
-            const length = google.maps.geometry.spherical.computeDistanceBetween(sw, nw);
-
-            // 長方形の場合の面積計算
-            if (!area) {
+                const bounds = selectedPolygon.getBounds();
+                const ne = bounds.getNorthEast();
+                const sw = bounds.getSouthWest();
+                const se = new google.maps.LatLng(sw.lat(), ne.lng());
+                const nw = new google.maps.LatLng(ne.lat(), sw.lng());
+                
+                const width = google.maps.geometry.spherical.computeDistanceBetween(sw, se);
+                const length = google.maps.geometry.spherical.computeDistanceBetween(sw, nw);
                 area = width * length;
+            } else {
+                // 多角形の場合
+                area = google.maps.geometry.spherical.computeArea(selectedPolygon.getPath());
             }
-
-            // 実測値を保存
-            actualDimensions = {
-                width: width,
-                length: length
-            };
 
             // 表示更新
             document.getElementById('areaInfo').style.display = 'block';
             document.getElementById('selectedArea').textContent = Math.round(area).toLocaleString();
-            document.getElementById('actualWidth').textContent = width.toFixed(1);
-            document.getElementById('actualLength').textContent = length.toFixed(1);
-
-            // 農地寸法を更新
-            updateFieldDimensions();
+            
+            // 注意：測定ツールを使用してください
+            if (measuredDimensions.width === 0) {
+                document.getElementById('measuredWidth').textContent = '未測定';
+                document.getElementById('measuredLength').textContent = '未測定';
+            }
         }
 
         // 離隔を考慮した農地寸法を更新
         function updateFieldDimensions() {
             const margin = parseFloat(document.getElementById('fieldMargin').value) || 0;
             
-            // 離隔を考慮した寸法を計算
-            const effectiveWidth = Math.max(0, actualDimensions.width - (margin * 2));
-            const effectiveLength = Math.max(0, actualDimensions.length - (margin * 2));
-            
-            // 入力フィールドに反映
-            document.getElementById('fieldWidth').value = Math.round(effectiveWidth);
-            document.getElementById('fieldLength').value = Math.round(effectiveLength);
-            
-            // 自動計算
-            calculate();
+            if (measuredDimensions.width > 0 && measuredDimensions.length > 0) {
+                // 測定値から離隔を考慮した寸法を計算
+                const effectiveWidth = Math.max(0, measuredDimensions.width - (margin * 2));
+                const effectiveLength = Math.max(0, measuredDimensions.length - (margin * 2));
+                
+                // 入力フィールドに反映
+                document.getElementById('fieldWidth').value = Math.round(effectiveWidth);
+                document.getElementById('fieldLength').value = Math.round(effectiveLength);
+                
+                // 自動計算
+                calculate();
+            }
         }
 
         // 選択クリア
@@ -618,7 +760,48 @@
                 selectedPolygon.setMap(null);
                 selectedPolygon = null;
                 document.getElementById('areaInfo').style.display = 'none';
-                actualDimensions = { width: 0, length: 0 };
+                measuredDimensions = { width: 0, length: 0 };
+            }
+            endMeasurement();
+        }
+
+        // 配置イメージを描画
+        function drawLayoutPreview() {
+            const canvas = document.getElementById('layoutPreview');
+            const fieldWidth = parseFloat(document.getElementById('fieldWidth').value) || 0;
+            const fieldLength = parseFloat(document.getElementById('fieldLength').value) || 0;
+            const panelWidth = parseFloat(document.getElementById('panelWidth').value) || 0;
+            const panelHeight = parseFloat(document.getElementById('panelHeight').value) || 0;
+            const columnSpacing = parseFloat(document.getElementById('columnSpacing').value) || 0;
+            const rowSpacing = parseFloat(document.getElementById('rowSpacing').value) || 0;
+
+            if (fieldWidth === 0 || fieldLength === 0) return;
+
+            // キャンバスサイズを設定
+            const scale = Math.min(800 / (fieldWidth * 1000), 280 / (fieldLength * 1000));
+            canvas.style.width = '100%';
+            canvas.style.height = '300px';
+
+            // 既存のパネルをクリア
+            canvas.innerHTML = '';
+
+            // 農地の背景
+            canvas.style.backgroundColor = '#e8f5e9';
+
+            const columnCount = Math.floor((fieldWidth * 1000) / (panelWidth + columnSpacing));
+            const rowCount = Math.floor((fieldLength * 1000) / (panelHeight + rowSpacing));
+
+            // パネルを配置
+            for (let row = 0; row < rowCount; row++) {
+                for (let col = 0; col < columnCount; col++) {
+                    const panel = document.createElement('div');
+                    panel.className = 'panel-preview';
+                    panel.style.width = (panelWidth * scale) + 'px';
+                    panel.style.height = (panelHeight * scale) + 'px';
+                    panel.style.left = (col * (panelWidth + columnSpacing) * scale) + 'px';
+                    panel.style.top = (row * (panelHeight + rowSpacing) * scale) + 'px';
+                    canvas.appendChild(panel);
+                }
             }
         }
 
@@ -632,7 +815,7 @@
             const tiltAngle = parseFloat(document.getElementById('tiltAngle').value) || 0;
             const columnSpacing = parseFloat(document.getElementById('columnSpacing').value) || 0;
             const rowSpacing = parseFloat(document.getElementById('rowSpacing').value) || 0;
-            const panelCapacity = parseFloat(document.getElementById('panelCapacity').value) || 400;
+            const panelCapacity = parseFloat(document.getElementById('panelCapacity').value) || 600;
             const fieldMargin = parseFloat(document.getElementById('fieldMargin').value) || 0;
 
             // 面積計算
@@ -650,8 +833,7 @@
             const totalPanelHorizontalArea = totalPanels * panelHorizontalProjection;
 
             // 有効農地面積（離隔を考慮）
-            const effectiveArea = actualDimensions.width * actualDimensions.length - 
-                                 (fieldMargin * 2 * (actualDimensions.width + actualDimensions.length - 2 * fieldMargin));
+            const effectiveArea = measuredDimensions.width * measuredDimensions.length;
 
             // 遮光率
             const shadingRatio = totalFieldArea > 0 ? (totalPanelHorizontalArea / totalFieldArea) * 100 : 0;
@@ -696,20 +878,38 @@
                 shadingRatioElement.className = 'text-2xl font-bold text-red-600';
             }
 
-            // PDF出力ボタンを表示
+            // 配置イメージを表示
             if (totalPanels > 0) {
+                document.getElementById('layoutPreviewSection').style.display = 'block';
+                drawLayoutPreview();
                 document.getElementById('pdfButton').style.display = 'block';
+                
+                // 地図のスナップショットを取得
+                if (map) {
+                    html2canvas(document.getElementById('map'), {
+                        useCORS: true,
+                        allowTaint: false,
+                        scale: 2
+                    }).then(canvas => {
+                        mapSnapshot = canvas;
+                    });
+                }
             }
         }
 
         // PDF生成関数
-        function generatePDF() {
+        async function generatePDF() {
             const { jsPDF } = window.jspdf;
+            
+            // A3横向きで作成
             const doc = new jsPDF({
                 orientation: 'landscape',
                 unit: 'mm',
                 format: 'a3'
             });
+
+            // 日本語フォントの設定（簡易的な対応）
+            doc.setFont('helvetica');
 
             // 設定値を取得
             const fieldWidth = parseFloat(document.getElementById('fieldWidth').value) || 0;
@@ -719,7 +919,7 @@
             const tiltAngle = parseFloat(document.getElementById('tiltAngle').value) || 0;
             const columnSpacing = parseFloat(document.getElementById('columnSpacing').value) || 0;
             const rowSpacing = parseFloat(document.getElementById('rowSpacing').value) || 0;
-            const panelCapacity = parseFloat(document.getElementById('panelCapacity').value) || 400;
+            const panelCapacity = parseFloat(document.getElementById('panelCapacity').value) || 600;
             const columnCount = Math.floor((fieldWidth * 1000) / (panelWidth + columnSpacing));
             const rowCount = Math.floor((fieldLength * 1000) / (panelHeight + rowSpacing));
             const totalPanels = rowCount * columnCount;
@@ -738,19 +938,38 @@
             doc.setLineWidth(1);
             doc.rect(10, 10, 400, 277);
 
-            // タイトル
+            // タイトル（UTF-8対応のため英語併記）
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(18);
-            doc.text(`営農型太陽光発電配置図 ${totalPower.toFixed(1)}kW 遮光率${shadingRatio.toFixed(1)}%`, 210, 25, { align: 'center' });
+            const titleText = `Agrivoltaic System Layout ${totalPower.toFixed(1)}kW Shading Ratio ${shadingRatio.toFixed(1)}%`;
+            doc.text(titleText, 210, 25, { align: 'center' });
+            
+            // 日本語タイトル（簡易表記）
+            doc.setFontSize(14);
+            doc.text(`[農地太陽光発電配置図]`, 210, 32, { align: 'center' });
 
-            // 平面図エリア
+            // Google Map背景（もし取得できていれば）
+            if (mapSnapshot) {
+                try {
+                    const imgData = mapSnapshot.toDataURL('image/jpeg', 0.5);
+                    doc.addImage(imgData, 'JPEG', 20, 40, 200, 150, undefined, 'FAST');
+                    doc.setDrawColor(0);
+                    doc.setLineWidth(0.5);
+                    doc.rect(20, 40, 200, 150);
+                } catch (e) {
+                    console.error('Map image error:', e);
+                }
+            }
+
+            // 平面図エリア（透明度を持つ白い背景）
             const planX = 20;
             const planY = 40;
-            const planWidth = 280;
-            const planHeight = 180;
+            const planWidth = 200;
+            const planHeight = 150;
             
             // 平面図の枠
             doc.setLineWidth(0.5);
+            doc.setDrawColor(0);
             doc.rect(planX, planY, planWidth, planHeight);
 
             // スケール計算
@@ -764,12 +983,14 @@
             const offsetX = planX + (planWidth - scaledFieldWidth) / 2;
             const offsetY = planY + (planHeight - scaledFieldLength) / 2;
 
-            doc.setLineWidth(1);
+            doc.setLineWidth(2);
+            doc.setDrawColor(255, 0, 0);
             doc.rect(offsetX, offsetY, scaledFieldWidth, scaledFieldLength);
 
             // パネル配置を描画
             doc.setLineWidth(0.3);
             doc.setFillColor(200, 200, 255);
+            doc.setDrawColor(100, 100, 255);
             for (let row = 0; row < rowCount; row++) {
                 for (let col = 0; col < columnCount; col++) {
                     const x = offsetX + col * (panelWidth + columnSpacing) * scale;
@@ -780,123 +1001,159 @@
                 }
             }
 
-            // 寸法線（横）
-            doc.setLineWidth(0.3);
-            doc.line(offsetX, offsetY + scaledFieldLength + 10, offsetX + scaledFieldWidth, offsetY + scaledFieldLength + 10);
-            doc.line(offsetX, offsetY + scaledFieldLength + 8, offsetX, offsetY + scaledFieldLength + 12);
-            doc.line(offsetX + scaledFieldWidth, offsetY + scaledFieldLength + 8, offsetX + scaledFieldWidth, offsetY + scaledFieldLength + 12);
+            // 寸法線と数値
+            doc.setDrawColor(0);
+            doc.setLineWidth(0.5);
+            
+            // 横寸法（農地幅）
+            doc.line(offsetX, offsetY - 5, offsetX + scaledFieldWidth, offsetY - 5);
+            doc.line(offsetX, offsetY - 7, offsetX, offsetY - 3);
+            doc.line(offsetX + scaledFieldWidth, offsetY - 7, offsetX + scaledFieldWidth, offsetY - 3);
             doc.setFontSize(10);
-            doc.text(`${fieldWidth * 1000}`, offsetX + scaledFieldWidth / 2, offsetY + scaledFieldLength + 15, { align: 'center' });
+            doc.text(`${fieldWidth}m`, offsetX + scaledFieldWidth / 2, offsetY - 8, { align: 'center' });
 
-            // 寸法線（縦）
-            doc.line(offsetX + scaledFieldWidth + 10, offsetY, offsetX + scaledFieldWidth + 10, offsetY + scaledFieldLength);
-            doc.line(offsetX + scaledFieldWidth + 8, offsetY, offsetX + scaledFieldWidth + 12, offsetY);
-            doc.line(offsetX + scaledFieldWidth + 8, offsetY + scaledFieldLength, offsetX + scaledFieldWidth + 12, offsetY + scaledFieldLength);
+            // 縦寸法（農地長さ）
+            doc.line(offsetX - 5, offsetY, offsetX - 5, offsetY + scaledFieldLength);
+            doc.line(offsetX - 7, offsetY, offsetX - 3, offsetY);
+            doc.line(offsetX - 7, offsetY + scaledFieldLength, offsetX - 3, offsetY + scaledFieldLength);
             doc.save();
-            doc.text(0, 0, `${fieldLength * 1000}`, {
-                angle: 90
-            });
+            doc.text(`${fieldLength}m`, offsetX - 10, offsetY + scaledFieldLength / 2, { angle: 90 });
             doc.restore();
-            const textWidth = doc.getTextWidth(`${fieldLength * 1000}`);
-            doc.text(`${fieldLength * 1000}`, offsetX + scaledFieldWidth + 15, offsetY + scaledFieldLength / 2 + textWidth / 2, { angle: 90 });
 
-            // 側面図
-            const sideX = 310;
-            const sideY = 100;
+            // パネル間隔の表示
+            if (columnCount > 1) {
+                const spacing1X = offsetX + panelWidth * scale;
+                const spacing1Y = offsetY + scaledFieldLength + 15;
+                doc.setLineWidth(0.3);
+                doc.line(spacing1X, spacing1Y, spacing1X + columnSpacing * scale, spacing1Y);
+                doc.setFontSize(8);
+                doc.text(`${columnSpacing}mm`, spacing1X + (columnSpacing * scale) / 2, spacing1Y - 2, { align: 'center' });
+            }
+
+            if (rowCount > 1) {
+                const spacing2X = offsetX + scaledFieldWidth + 15;
+                const spacing2Y = offsetY + panelHeight * scale;
+                doc.setLineWidth(0.3);
+                doc.line(spacing2X, spacing2Y, spacing2X, spacing2Y + rowSpacing * scale);
+                doc.setFontSize(8);
+                doc.save();
+                doc.text(`${rowSpacing}mm`, spacing2X + 2, spacing2Y + (rowSpacing * scale) / 2, { angle: 90 });
+                doc.restore();
+            }
+
+            // 方位記号（改善版）
+            const compassX = 195;
+            const compassY = 165;
             doc.setLineWidth(0.5);
-            doc.rect(sideX, sideY, 90, 60);
-            
-            // 側面図の内容
-            doc.setLineWidth(0.3);
-            // 地面
-            doc.line(sideX + 10, sideY + 50, sideX + 80, sideY + 50);
-            // 支柱
-            doc.line(sideX + 25, sideY + 50, sideX + 25, sideY + 30);
-            doc.line(sideX + 65, sideY + 50, sideX + 65, sideY + 30);
-            // パネル（傾斜）
-            const panelTop = sideY + 30 - Math.sin((tiltAngle * Math.PI) / 180) * 15;
-            doc.line(sideX + 20, sideY + 30, sideX + 70, panelTop);
+            doc.setDrawColor(0);
+            doc.circle(compassX, compassY, 10);
             doc.setLineWidth(2);
-            doc.line(sideX + 20, sideY + 30, sideX + 70, panelTop);
+            // 北向き矢印
+            doc.line(compassX, compassY - 8, compassX, compassY + 8);
+            doc.line(compassX, compassY - 8, compassX - 3, compassY - 3);
+            doc.line(compassX, compassY - 8, compassX + 3, compassY - 3);
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.text('N', compassX, compassY - 12, { align: 'center' });
+            // 東西南の表示
+            doc.setFontSize(8);
+            doc.text('E', compassX + 12, compassY + 1, { align: 'center' });
+            doc.text('W', compassX - 12, compassY + 1, { align: 'center' });
+            doc.text('S', compassX, compassY + 14, { align: 'center' });
+
+            // システム構成ボックス（右側）
+            const sysX = 230;
+            const sysY = 40;
+            doc.setLineWidth(0.5);
+            doc.rect(sysX, sysY, 170, 80);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(12);
+            doc.text('System Configuration', sysX + 5, sysY + 10);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(10);
             
-            // 傾斜角度表示
-            doc.setFontSize(9);
-            doc.text(`傾斜${tiltAngle}°`, sideX + 45, sideY + 20, { align: 'center' });
+            const sysInfo = [
+                `Module Capacity: ${panelCapacity}W`,
+                `Panel Size: ${panelWidth} x ${panelHeight}mm`,
+                `Tilt Angle: ${tiltAngle} degrees`,
+                `Number of Panels: ${totalPanels}`,
+                `Total Capacity: ${totalPower.toFixed(1)}kW`,
+                `Panel Area: ${singlePanelArea.toFixed(3)}m2/panel`,
+                `Layout: ${columnCount} columns x ${rowCount} rows`
+            ];
+            
+            sysInfo.forEach((info, index) => {
+                doc.text(info, sysX + 5, sysY + 20 + (index * 8));
+            });
 
-            // モジュール仕様ボックス
-            const specX = 310;
-            const specY = 40;
-            doc.setLineWidth(0.5);
-            doc.rect(specX, specY, 90, 50);
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(10);
-            doc.text('◇モジュール仕様', specX + 5, specY + 8);
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(9);
-            doc.text(`型式：${panelCapacity}W太陽電池`, specX + 5, specY + 16);
-            doc.text(`寸法：${panelWidth}×${panelHeight}×35mm`, specX + 5, specY + 23);
-            doc.text(`枚数：${totalPanels}枚`, specX + 5, specY + 30);
-            doc.text(`容量：${totalPower.toFixed(2)}kW`, specX + 5, specY + 37);
-            doc.text(`重量：約20kg/枚`, specX + 5, specY + 44);
-
-            // 遮光率計算ボックス
+            // 遮光率計算ボックス（下部）
             const calcX = 20;
-            const calcY = 230;
+            const calcY = 200;
             doc.setLineWidth(0.5);
-            doc.rect(calcX, calcY, 280, 45);
+            doc.rect(calcX, calcY, 380, 50);
             doc.setFont('helvetica', 'bold');
-            doc.setFontSize(10);
-            doc.text('◇遮光率', calcX + 5, calcY + 8);
+            doc.setFontSize(12);
+            doc.text('Shading Ratio Calculation', calcX + 5, calcY + 10);
             doc.setFont('helvetica', 'normal');
-            doc.setFontSize(9);
-            doc.text(`モジュール総面積：${totalPanels}枚 × ${singlePanelArea.toFixed(2)}m² = ${(totalPanels * singlePanelArea).toFixed(1)}m²`, calcX + 5, calcY + 16);
-            doc.text(`水平投影面積：${(totalPanels * panelHorizontalProjection).toFixed(1)}m²（傾斜${tiltAngle}度考慮）`, calcX + 5, calcY + 24);
-            doc.text(`占有総面積：${totalFieldArea.toFixed(1)}m²`, calcX + 5, calcY + 32);
-            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(10);
+            
+            const calcInfo = [
+                `Total Module Area: ${totalPanels} panels x ${singlePanelArea.toFixed(4)}m2 = ${(totalPanels * singlePanelArea).toFixed(2)}m2`,
+                `Horizontal Projection Area: ${(totalPanels * panelHorizontalProjection).toFixed(2)}m2 (considering ${tiltAngle} degree tilt)`,
+                `Field Area: ${totalFieldArea.toFixed(1)}m2`,
+                `Formula: Shading Ratio = ${(totalPanels * panelHorizontalProjection).toFixed(2)}m2 / ${totalFieldArea.toFixed(1)}m2 x 100 = ${shadingRatio.toFixed(2)}%`
+            ];
+            
+            calcInfo.forEach((info, index) => {
+                doc.text(info, calcX + 5, calcY + 20 + (index * 8));
+            });
+            
+            // 遮光率を赤字で強調
             doc.setTextColor(255, 0, 0);
-            doc.text(`遮光率=${(totalPanels * panelHorizontalProjection).toFixed(1)}m² ÷ ${totalFieldArea.toFixed(1)}m² × 100 = ${shadingRatio.toFixed(2)}%`, calcX + 5, calcY + 40);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(14);
+            doc.text(`Shading Ratio = ${shadingRatio.toFixed(2)}%`, calcX + 300, calcY + 44);
             doc.setTextColor(0, 0, 0);
 
             // 表題欄
             doc.setLineWidth(0.5);
-            doc.rect(310, 230, 90, 45);
-            doc.line(310, 240, 400, 240);
-            doc.line(310, 250, 400, 250);
-            doc.line(310, 260, 400, 260);
-            doc.line(340, 230, 340, 275);
-            doc.line(370, 230, 370, 275);
+            doc.rect(20, 255, 380, 25);
+            doc.line(100, 255, 100, 280);
+            doc.line(180, 255, 180, 280);
+            doc.line(260, 255, 260, 280);
+            doc.line(340, 255, 340, 280);
             
-            doc.setFontSize(8);
-            doc.text('番号', 325, 237, { align: 'center' });
-            doc.text('縮尺', 355, 237, { align: 'center' });
-            doc.text('設計年月日', 385, 237, { align: 'center' });
-            doc.text('設計', 325, 247, { align: 'center' });
-            doc.text('図面名称', 325, 257, { align: 'center' });
-            doc.text('会社名', 325, 267, { align: 'center' });
+            doc.setFontSize(9);
+            doc.text('Project Name', 60, 262, { align: 'center' });
+            doc.text('Designer', 140, 262, { align: 'center' });
+            doc.text('Date', 220, 262, { align: 'center' });
+            doc.text('Location', 300, 262, { align: 'center' });
+            doc.text('Drawing No.', 370, 262, { align: 'center' });
+            
+            // 記入内容
+            doc.setFontSize(10);
+            doc.text('Agrivoltaic System', 60, 272, { align: 'center' });
+            doc.text('SPRITE Co., Ltd.', 140, 269, { align: 'center' });
+            doc.text('Hara', 140, 275, { align: 'center' });
             
             // 日付
             const today = new Date();
-            const dateStr = `${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
-            doc.setFontSize(9);
-            doc.text(dateStr, 385, 247, { align: 'center' });
-            doc.text('営農型太陽光発電', 355, 257, { align: 'center' });
-            doc.text('配置図', 355, 267, { align: 'center' });
+            const year = today.getFullYear().toString().slice(2);
+            const month = ('0' + (today.getMonth() + 1)).slice(-2);
+            const day = ('0' + today.getDate()).slice(-2);
+            const dateStr = `${year}/${month}/${day}`;
+            doc.text(dateStr, 220, 272, { align: 'center' });
+            
+            // 場所（市町村名）
+            doc.text(currentCity || 'Unknown', 300, 272, { align: 'center' });
+            
+            // 図面番号
+            doc.text('001', 370, 272, { align: 'center' });
 
-            // 方位記号
-            const compassX = 380;
-            const compassY = 190;
-            doc.setLineWidth(0.5);
-            doc.circle(compassX, compassY, 15);
-            doc.setLineWidth(1);
-            // 北向き矢印
-            doc.line(compassX, compassY - 10, compassX, compassY + 10);
-            doc.line(compassX, compassY - 10, compassX - 3, compassY - 5);
-            doc.line(compassX, compassY - 10, compassX + 3, compassY - 5);
-            doc.setFontSize(10);
-            doc.text('N', compassX, compassY - 18, { align: 'center' });
-
+            // ファイル名を生成
+            const filename = `${year}${month}${day}${currentCity || 'unknown'}${totalPower.toFixed(1)}kw${shadingRatio.toFixed(1)}%.pdf`;
+            
             // PDFを保存
-            const filename = `営農型太陽光発電_配置図_${totalPower.toFixed(1)}kW_遮光率${shadingRatio.toFixed(1)}%.pdf`;
             doc.save(filename);
         }
 
