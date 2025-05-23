@@ -81,6 +81,15 @@
             border: 1px solid #1E40AF;
             opacity: 0.8;
         }
+        .measurement-info {
+            background: #FFF3CD;
+            border: 1px solid #FFEAA7;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: #856404;
+        }
         @font-face {
             font-family: 'NotoSansJP';
             src: url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap');
@@ -110,6 +119,15 @@
                 <p>選択された農地面積: <span id="selectedArea" class="font-bold">0</span> m²</p>
                 <p>測定サイズ: 幅（東西） <span id="measuredWidth" class="font-bold">0</span> m × 長さ（南北） <span id="measuredLength" class="font-bold">0</span> m</p>
                 <p class="text-sm text-gray-600 mt-1">※測定ツールで正確な寸法を測定してください</p>
+                <div class="measurement-info">
+                    <strong>📍 測定ガイド機能：</strong>
+                    <ul class="text-sm mt-1">
+                        <li>• 青色：幅（東西）の測定ライン</li>
+                        <li>• 緑色：長さ（南北）の測定ライン</li>
+                        <li>• 紫色点線：推定農地境界</li>
+                        <li>• 測定ポイントを参考に図形を描画できます</li>
+                    </ul>
+                </div>
                 <div class="mt-2 p-2 bg-yellow-50 rounded">
                     <label class="block text-sm font-medium text-gray-700 mb-1">
                         農地からの離隔距離 (m)
@@ -359,6 +377,7 @@
                 <li>Google Maps APIキーを取得して設定</li>
                 <li>住所検索で目的地を探すか、現在地ボタンで移動</li>
                 <li>「測定開始」ボタンで農地の幅と長さを正確に測定</li>
+                <li>測定完了後、ガイド表示で測定ポイントを確認しながら図形を描画</li>
                 <li>必要に応じて離隔距離を設定</li>
                 <li>パネル仕様と配置間隔を入力</li>
                 <li>「計算実行」で遮光率と配置イメージを確認</li>
@@ -368,6 +387,7 @@
                 <p class="text-sm text-blue-800">
                     <strong>💡 測定のヒント：</strong>
                     「測定開始」ボタンをクリック後、農地の幅（東西）と長さ（南北）をそれぞれクリックして測定してください。
+                    測定完了後、測定ポイントがガイドとして表示され、図形描画時の参考になります。
                 </p>
             </div>
         </div>
@@ -384,6 +404,9 @@
         let geocoder;
         let currentCity = '';
         let mapSnapshot = null;
+        let savedMeasurementPoints = []; // 測定ポイントを保存
+        let savedMeasurementLines = []; // 測定ラインを保存
+        let measurementGuideMarkers = []; // ガイド用マーカー
 
         // ローカルストレージからAPIキーを取得
         function getStoredApiKey() {
@@ -396,6 +419,16 @@
             if (apiKey) {
                 localStorage.setItem('googleMapsApiKey', apiKey);
                 alert('APIキーを保存しました');
+            }
+        }
+
+        // 測定マーカーをクリア（現在の測定のみ）
+        function clearMeasurementMarkers() {
+            measurementMarkers.forEach(marker => marker.setMap(null));
+            measurementMarkers = [];
+            if (measurementLine) {
+                measurementLine.setMap(null);
+                measurementLine = null;
             }
         }
 
@@ -550,6 +583,12 @@
             measureButton.innerHTML = '<button class="controls-button" id="measureBtn" onclick="toggleMeasurement()">📏 測定開始</button>';
             map.controls[google.maps.ControlPosition.TOP_RIGHT].push(measureButton);
 
+            // 測定ガイド表示ボタン
+            const guideButton = document.createElement('div');
+            guideButton.className = 'map-controls';
+            guideButton.innerHTML = '<button class="controls-button" id="guideBtn" onclick="toggleMeasurementGuide()" style="display:none;">📍 測定ガイド</button>';
+            map.controls[google.maps.ControlPosition.TOP_RIGHT].push(guideButton);
+
             // 現在地ボタン
             const locationButton = document.createElement('div');
             locationButton.className = 'map-controls';
@@ -596,7 +635,15 @@
                 const marker = new google.maps.Marker({
                     position: event.latLng,
                     map: map,
-                    title: measurementMarkers.length === 0 ? '開始点' : '終了点'
+                    title: measurementMarkers.length === 0 ? '開始点' : '終了点',
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 8,
+                        fillColor: '#FF0000',
+                        fillOpacity: 1,
+                        strokeColor: '#FFFFFF',
+                        strokeWeight: 2
+                    }
                 });
                 measurementMarkers.push(marker);
 
@@ -618,18 +665,41 @@
                     });
                     measurementLine.setMap(map);
 
+                    // 測定ポイントとラインを保存
+                    savedMeasurementPoints.push({
+                        start: measurementMarkers[0].getPosition(),
+                        end: measurementMarkers[1].getPosition(),
+                        type: measurementMode,
+                        distance: distance
+                    });
+
                     // 測定結果を保存
                     if (measurementMode === 'width') {
                         measuredDimensions.width = distance;
                         alert(`幅: ${distance.toFixed(1)}m\n次に長さ（南北方向）を測定してください。`);
                         
-                        // 長さ測定モードへ
-                        clearMeasurementMarkers();
+                        // マーカーを保持（後でガイドとして使用）
+                        savedMeasurementLines.push({
+                            line: measurementLine,
+                            markers: [...measurementMarkers],
+                            type: 'width'
+                        });
+                        
+                        // 次の測定のためにクリア
+                        measurementMarkers = [];
+                        measurementLine = null;
                         measurementMode = 'length';
                         document.getElementById('measureBtn').textContent = '📏 長さを測定中...';
                     } else if (measurementMode === 'length') {
                         measuredDimensions.length = distance;
                         alert(`長さ: ${distance.toFixed(1)}m\n測定が完了しました。`);
+                        
+                        // マーカーを保持
+                        savedMeasurementLines.push({
+                            line: measurementLine,
+                            markers: [...measurementMarkers],
+                            type: 'length'
+                        });
                         
                         // 測定結果を表示
                         document.getElementById('measuredWidth').textContent = measuredDimensions.width.toFixed(1);
@@ -639,8 +709,14 @@
                         // 農地寸法を更新
                         updateFieldDimensions();
                         
+                        // 測定ガイドボタンを表示
+                        document.getElementById('guideBtn').style.display = 'block';
+                        
                         // 測定終了
                         endMeasurement();
+                        
+                        // 測定完了後、自動的にガイドを表示
+                        showMeasurementGuide();
                     }
                 }
             }
@@ -659,11 +735,108 @@
         // 測定終了
         function endMeasurement() {
             measurementMode = null;
-            clearMeasurementMarkers();
+            measurementMarkers = [];
+            measurementLine = null;
             google.maps.event.clearListeners(map, 'click');
             const btn = document.getElementById('measureBtn');
             btn.textContent = '📏 測定開始';
             btn.classList.remove('measuring');
+        }
+
+        // 測定ガイドの表示/非表示を切り替え
+        function toggleMeasurementGuide() {
+            const btn = document.getElementById('guideBtn');
+            if (measurementGuideMarkers.length > 0) {
+                // ガイドを非表示
+                hideMeasurementGuide();
+                btn.textContent = '📍 測定ガイド表示';
+            } else {
+                // ガイドを表示
+                showMeasurementGuide();
+                btn.textContent = '📍 測定ガイド非表示';
+            }
+        }
+
+        // 測定ガイドを表示
+        function showMeasurementGuide() {
+            // 既存のガイドをクリア
+            hideMeasurementGuide();
+
+            // 保存された測定ラインとマーカーを表示
+            savedMeasurementLines.forEach(item => {
+                // ラインを薄い色で表示
+                const guideLine = new google.maps.Polyline({
+                    path: [item.markers[0].getPosition(), item.markers[1].getPosition()],
+                    geodesic: true,
+                    strokeColor: item.type === 'width' ? '#0000FF' : '#00FF00',
+                    strokeOpacity: 0.5,
+                    strokeWeight: 2,
+                    map: map
+                });
+                measurementGuideMarkers.push(guideLine);
+
+                // 端点マーカーを表示
+                item.markers.forEach((marker, index) => {
+                    const guideMarker = new google.maps.Marker({
+                        position: marker.getPosition(),
+                        map: map,
+                        title: `${item.type === 'width' ? '幅' : '長さ'} ${index === 0 ? '開始' : '終了'}点`,
+                        icon: {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 6,
+                            fillColor: item.type === 'width' ? '#0000FF' : '#00FF00',
+                            fillOpacity: 0.8,
+                            strokeColor: '#FFFFFF',
+                            strokeWeight: 2
+                        }
+                    });
+                    measurementGuideMarkers.push(guideMarker);
+                });
+            });
+
+            // 4つの角を結んだ農地境界を点線で表示（もし4点すべてある場合）
+            if (savedMeasurementLines.length === 2) {
+                const widthLine = savedMeasurementLines.find(l => l.type === 'width');
+                const lengthLine = savedMeasurementLines.find(l => l.type === 'length');
+                
+                if (widthLine && lengthLine) {
+                    // 4つの角を推定
+                    const corners = estimateFieldCorners(widthLine.markers, lengthLine.markers);
+                    
+                    // 境界線を点線で描画
+                    const boundaryLine = new google.maps.Polyline({
+                        path: [...corners, corners[0]], // 閉じるために最初の点を最後に追加
+                        geodesic: true,
+                        strokeColor: '#FF00FF',
+                        strokeOpacity: 0.8,
+                        strokeWeight: 2,
+                        strokePattern: [10, 10], // 点線パターン
+                        map: map
+                    });
+                    measurementGuideMarkers.push(boundaryLine);
+                }
+            }
+        }
+
+        // 測定ガイドを非表示
+        function hideMeasurementGuide() {
+            measurementGuideMarkers.forEach(item => {
+                item.setMap(null);
+            });
+            measurementGuideMarkers = [];
+        }
+
+        // 4つの角を推定
+        function estimateFieldCorners(widthMarkers, lengthMarkers) {
+            // 簡易的な推定：測定した2つのラインから矩形の4角を推定
+            const w1 = widthMarkers[0].getPosition();
+            const w2 = widthMarkers[1].getPosition();
+            const l1 = lengthMarkers[0].getPosition();
+            const l2 = lengthMarkers[1].getPosition();
+            
+            // 最も近い点を結んで矩形を作る
+            // これは簡易的な実装で、実際の農地が完全な矩形でない場合は調整が必要
+            return [w1, w2, l2, l1];
         }
 
         // 現在地を取得
@@ -762,6 +935,22 @@
                 document.getElementById('areaInfo').style.display = 'none';
                 measuredDimensions = { width: 0, length: 0 };
             }
+            
+            // 測定ガイドも非表示
+            hideMeasurementGuide();
+            
+            // 保存された測定データをクリア
+            savedMeasurementLines.forEach(item => {
+                if (item.line) item.line.setMap(null);
+                item.markers.forEach(marker => marker.setMap(null));
+            });
+            savedMeasurementLines = [];
+            savedMeasurementPoints = [];
+            
+            // ガイドボタンを非表示
+            document.getElementById('guideBtn').style.display = 'none';
+            document.getElementById('guideBtn').textContent = '📍 測定ガイド表示';
+            
             endMeasurement();
         }
 
